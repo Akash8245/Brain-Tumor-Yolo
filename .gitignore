@@ -43,7 +43,6 @@ __cache__/
 ultralytics*/
 
 # PyTorch
-*.pt
 
 # Images
 *.png
@@ -54,3 +53,4 @@ ultralytics*/
 *.tiff
 
 # Avoid committing large media by default; whitelist selectively if needed
+
