@@ -9,7 +9,7 @@ from ultralytics import YOLO
 
 import torch
 import torch.nn as nn
-import cv2
+from matplotlib import cm
 
 DEFAULT_WEIGHTS = "runs/classify/brain_tumor/weights/best.pt"
 FIXED_IMGSZ = 224
@@ -64,15 +64,13 @@ def _restore_silu_inplace(changes):
 
 
 def generate_gradcam(model: YOLO, image: Image.Image, target_class_index: int, imgsz: int = FIXED_IMGSZ) -> Image.Image:
-	# Prepare tensor [1,3,H,W] in 0..1
+	# Resize with PIL (avoid OpenCV)
 	img_rgb = np.array(image.convert("RGB"))
-	resized = cv2.resize(img_rgb, (imgsz, imgsz), interpolation=cv2.INTER_LINEAR)
-	tensor = torch.from_numpy(resized).float().permute(2, 0, 1).unsqueeze(0) / 255.0
-	# Ensure gradients flow from output back to feature maps
+	resized_pil = image.convert("RGB").resize((imgsz, imgsz), resample=Image.BILINEAR)
+	tensor = torch.from_numpy(np.array(resized_pil)).float().permute(2, 0, 1).unsqueeze(0) / 255.0
 	tensor.requires_grad_(True)
 
 	model_torch = model.model
-	# Keep layers in eval for stable activations, but enable gradient calculations
 	model_torch.eval()
 
 	target_layer = _find_last_conv2d(model_torch)
@@ -84,31 +82,25 @@ def generate_gradcam(model: YOLO, image: Image.Image, target_class_index: int, i
 
 	def fwd_hook(_, __, output):
 		nonlocal activations
-		activations = output  # keep graph
+		activations = output
 
 	def bwd_hook(_, grad_input, grad_output):
 		nonlocal gradients
-		# clone to avoid view/inplace issues
 		gradients = grad_output[0].clone()
 
-	# Register hooks on the target conv layer
 	fwd_handle = target_layer.register_forward_hook(fwd_hook)
 	bwd_handle = target_layer.register_full_backward_hook(bwd_hook)
 
-	# Temporarily disable in-place SiLU to avoid autograd errors
 	changes = _toggle_silu_inplace(model_torch, inplace=False)
 	try:
 		with torch.enable_grad():
-			# Forward
 			logits = model_torch(tensor)
 			if isinstance(logits, (list, tuple)):
 				logits = logits[0]
-			# Backward for target class
 			target_logit = logits[:, target_class_index].squeeze()
 			model_torch.zero_grad(set_to_none=True)
 			target_logit.backward(retain_graph=True)
 	finally:
-		# Cleanup hooks and restore modules
 		fwd_handle.remove()
 		bwd_handle.remove()
 		_restore_silu_inplace(changes)
@@ -116,9 +108,8 @@ def generate_gradcam(model: YOLO, image: Image.Image, target_class_index: int, i
 	if activations is None or gradients is None:
 		return image
 
-	# Compute Grad-CAM
-	weights = gradients.mean(dim=(2, 3), keepdim=True)  # [1,C,1,1]
-	saliency = (weights * activations).sum(dim=1, keepdim=True)  # [1,1,H,W]
+	weights = gradients.mean(dim=(2, 3), keepdim=True)
+	saliency = (weights * activations).sum(dim=1, keepdim=True)
 	saliency = torch.relu(saliency)
 	saliency = saliency.squeeze().detach().cpu().numpy()
 	if saliency.max() > 0:
@@ -126,19 +117,20 @@ def generate_gradcam(model: YOLO, image: Image.Image, target_class_index: int, i
 	else:
 		saliency = np.zeros_like(saliency)
 
-	heatmap = (saliency * 255).astype(np.uint8)
-	heatmap = cv2.resize(heatmap, (img_rgb.shape[1], img_rgb.shape[0]))
-	colored = cv2.applyColorMap(heatmap, cv2.COLORMAP_JET)
-	overlay = cv2.addWeighted(cv2.cvtColor(img_rgb, cv2.COLOR_RGB2BGR), 0.6, colored, 0.4, 0)
-	overlay_rgb = cv2.cvtColor(overlay, cv2.COLOR_BGR2RGB)
-	return Image.fromarray(overlay_rgb)
+	# Create heatmap with matplotlib colormap (avoid OpenCV)
+	cmap = cm.get_cmap('jet')
+	heatmap = (cmap(saliency)[:, :, :3] * 255).astype(np.uint8)  # HxWx3 RGB
+	# Resize heatmap to original image size
+	heatmap_img = Image.fromarray(heatmap).resize((img_rgb.shape[1], img_rgb.shape[0]), resample=Image.BILINEAR)
+	# Overlay
+	overlay = Image.blend(Image.fromarray(img_rgb), heatmap_img, alpha=0.4)
+	return overlay
 
 
 st.set_page_config(page_title="Brain Tumor Detection (YOLOv8)", layout="wide")
 
 st.title("Brain Tumor Detection with YOLOv8 (Classification)")
 
-# Try to load model once at the top; if missing, show guidance
 model = None
 model_error = None
 try:
@@ -180,7 +172,6 @@ with right:
 			confidence_pct = no_prob * 100.0
 			st.success(f"NO — Brain Tumor not detected with {confidence_pct:.2f}% confidence")
 		else:
-			# Fallback if labels aren't named 'yes'/'no'
 			pred_idx = int(np.argmax(scores))
 			pred_prob = scores[pred_idx] * 100.0
 			if pred_label.lower() in ("yes", "tumor", "positive"):
