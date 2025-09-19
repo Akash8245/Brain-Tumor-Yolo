@@ -1,0 +1,57 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.dylib
+*.egg-info/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+
+# OS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+
+# Notebooks
+*.ipynb_checkpoints/
+
+# Streamlit
+.streamlit/
+**/.streamlit/
+
+# Logs
+logs/
+*.log
+
+# Data & outputs (keep raw dataset but ignore derived splits and runs)
+datasets/
+!datasets/.gitkeep
+runs/
+
+# Cache
+.cache/
+__cache__/
+
+# Ultralytics artifacts
+ultralytics*/
+
+# PyTorch
+*.pt
+
+# Images
+*.png
+*.jpg
+*.jpeg
+*.bmp
+*.tif
+*.tiff
+
+# Avoid committing large media by default; whitelist selectively if needed
