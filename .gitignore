@@ -34,7 +34,6 @@ logs/
 # Data & outputs (keep raw dataset but ignore derived splits and runs)
 datasets/
 !datasets/.gitkeep
-runs/
 
 # Cache
 .cache/
